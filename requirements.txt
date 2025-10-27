@@ -1,0 +1,15 @@
+# add requirements here
+# pip install -r requirements.txt
+
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+openai
+pgvector
+python-dotenv
+psycopg2-binary
+transformers
+torch
+Pillow
+requests

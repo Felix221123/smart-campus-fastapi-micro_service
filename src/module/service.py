@@ -7,5 +7,5 @@ from . import models, schemas
 from src.database import get_db
 from .models import Product, ProductEmbedding
 
-async def get_all_products(db: Session = Depends(get_db)) -> List[Product]:
+async def get_all_services(db: Session = Depends(get_db)) -> List[Product]:
     pass

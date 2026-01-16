@@ -2,12 +2,13 @@
 
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, Optional, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 
 from src.module.models import BookingStatus
+
 
 
 
@@ -234,3 +235,63 @@ class VectorEmbeddingCreate(ORMBase):
 
 class VectorEmbeddingRead(VectorEmbeddingCreate):
     id: uuid.UUID
+
+
+
+
+
+class AssistantConversationCreate(ORMBase):
+    user_id: Optional[uuid.UUID] = None
+    title: Optional[str] = None
+    channel: str = "web"
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssistantConversationRead(ORMBase):
+    id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    title: Optional[str] = None
+    channel: str
+    metadata: dict = Field(alias="meta")
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssistantMessageCreate(ORMBase):
+    conversation_id: uuid.UUID
+    role: str
+    content: str
+    tool_name: Optional[str] = None
+    tool_payload: Optional[Dict[str, Any]] = None
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    latency_ms: Optional[int] = None
+
+
+class AssistantMessageRead(ORMBase):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    role: str
+    content: str
+    tool_name: Optional[str] = None
+    tool_payload: Optional[Dict[str, Any]] = None
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    latency_ms: Optional[int] = None
+    created_at: datetime
+
+
+class AssistantAgentEventCreate(ORMBase):
+    conversation_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    event_type: str
+    payload: Dict[str, Any]
+
+
+class AssistantAgentEventRead(ORMBase):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    event_type: str
+    payload: Dict[str, Any]
+    created_at: datetime

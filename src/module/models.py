@@ -23,6 +23,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.sql import func
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import text
 
 Base = declarative_base()
 
@@ -63,7 +66,7 @@ class User(Base, UUIDPrimaryKeyMixin):
 # -----------------------------
 # Academic Service
 # -----------------------------
-class Module(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+class Module(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "modules"
     __table_args__ = _table_args()
 
@@ -76,7 +79,7 @@ class Module(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     timetable_entries = relationship("TimetableEntry", back_populates="module")
 
 
-class Assessment(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+class Assessment(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "assessments"
     __table_args__ = _table_args()
 
@@ -364,3 +367,93 @@ class VectorEmbedding(Base, UUIDPrimaryKeyMixin):
 
     chunk = relationship("KnowledgeChunk", back_populates="embeddings")
 
+
+
+class AssistantConversation(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "assistant_conversations"
+    __table_args__ = _table_args()
+
+    user_id = Column(
+        "user_id",
+        UUID(as_uuid=True),
+        ForeignKey(f"{DB_SCHEMA}.users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    title = Column(String, nullable=True)
+    channel = Column(String, nullable=False, default="web")  # web | mobile | admin
+    meta = Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User")
+    messages = relationship(
+        "AssistantMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    events = relationship(
+        "AssistantAgentEvent",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AssistantAgentEvent(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "assistant_agent_events"
+    __table_args__ = _table_args()
+
+    conversation_id = Column(
+        "conversation_id",
+        UUID(as_uuid=True),
+        ForeignKey(f"{DB_SCHEMA}.assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    user_id = Column(
+        "user_id",
+        UUID(as_uuid=True),
+        ForeignKey(f"{DB_SCHEMA}.users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    event_type = Column(String, nullable=False)  # intent_detected | rag_retrieval | db_query | llm_call | etc
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    conversation = relationship("AssistantConversation", back_populates="events")
+    user = relationship("User")
+
+
+
+class AssistantMessage(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "assistant_messages"
+    __table_args__ = _table_args()
+
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{DB_SCHEMA}.assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    role = Column(String, nullable=False)  
+    content = Column(Text, nullable=False)
+
+    tool_name = Column(String, nullable=True)
+    tool_payload = Column(JSONB, nullable=True)
+
+    tokens_in = Column(Integer, nullable=True)
+    tokens_out = Column(Integer, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    conversation = relationship("AssistantConversation", back_populates="messages")

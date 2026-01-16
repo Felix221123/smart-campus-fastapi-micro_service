@@ -1,4 +1,9 @@
-# THINGS TO DO
-   - Make the search functionality using vector searchings
-   - Create a folder for the chat functionality
-   - Create a folder the recommendation functionality
+# TODO TESTING ALL AGENTS ONE BY ONE
+   - Testing the timetable agent
+   - Testing the assessments agent
+   - Testing events agent
+   - Testing notifications agent
+   - Testing rag pool agent
+   - Testing space booking agent
+   - Testing space agent
+   

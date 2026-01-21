@@ -61,6 +61,7 @@ class User(Base, UUIDPrimaryKeyMixin):
 
     # minimal fields (extend as needed)
     email = Column(String, unique=True, nullable=True, index=True)
+    full_name = Column("full_name",String, nullable=True)
 
 
 # -----------------------------
@@ -83,7 +84,7 @@ class Assessment(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "assessments"
     __table_args__ = _table_args()
 
-    module_id = Column(
+    moduleId = Column(
         UUID(as_uuid=True),
         ForeignKey(f"{DB_SCHEMA}.modules.id", ondelete="CASCADE"),
         nullable=False,
@@ -179,7 +180,7 @@ class Event(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 # -----------------------------
 # Space Finder / Booking Service
 # -----------------------------
-class Space(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+class Space(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "spaces"
     __table_args__ = _table_args()
 
@@ -200,7 +201,7 @@ class BookingStatus(str, PyEnum):
     CANCELLED = "CANCELLED"
 
 
-class SpaceBooking(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+class SpaceBooking(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "space_bookings"
     __table_args__ = _table_args()
 

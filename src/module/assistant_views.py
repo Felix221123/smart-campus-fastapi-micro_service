@@ -21,4 +21,10 @@ class AskRequest(ORMBase):
 @router.post("/ask")
 def ask(payload: AskRequest, db: Session = Depends(get_db)):
     # user_id: pass from auth later; for now None
-    return llm_run(db=db, question=payload.question, user_id=None, conversation_id=None or payload.conversation_id, channel="web")
+    return llm_run(
+        db=db, 
+        question=payload.question, 
+        user_id=payload.user_id, 
+        conversation_id=None or payload.conversation_id, 
+        channel="web"
+    )

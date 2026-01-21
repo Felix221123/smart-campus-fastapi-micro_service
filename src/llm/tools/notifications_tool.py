@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from src.module.models import Notification  # adjust path
+from src.module.models import Notification  
 
 
 def run(db: Session, user_id: str, limit: int = 10) -> Dict[str, Any]:

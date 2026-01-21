@@ -43,6 +43,17 @@ def ensure_conversation(
             {"id": conversation_id},
         ).fetchone()
         if row:
+            # if the conversation exist and the user id is missing, attach it here
+            if user_id or row[1] is None:
+                db.execute(
+                    text(f'''
+                        UPDATE "{DB_SCHEMA}".assistant_conversations
+                        SET user_id = :user_id, updated_at = now()
+                        WHERE id = :id
+                    '''),
+                    {"id": conversation_id, "user_id": user_id},
+                )
+                db.commit()
             return conversation_id
 
     new_id = str(uuid.uuid4())

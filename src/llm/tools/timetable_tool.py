@@ -41,6 +41,17 @@ _NEXT_WEEK_PATTERNS = [
     r"\bfollowing\s+week\b",
 ]
 
+_LAST_WEEK_PATTERNS = [
+    r"\blast[-\s]?week\b",
+    r"\bfor\s+last[-\s]?week\b",
+    r"\bprevious\s+week\b",
+]
+
+_LAST_MONTH_PATTERNS = [
+    r"\blast\s+month\b",
+    r"\bprevious\s+month\b",
+]
+
 
 _NEXT_7_DAYS_PATTERNS = [
     r"\bnext 7 days\b",
@@ -48,6 +59,11 @@ _NEXT_7_DAYS_PATTERNS = [
     r"\bin the next week\b",
     r"\bweek ahead\b",
     r"\bcoming 7 days\b",
+]
+
+_NEXT_DAY_PATTERNS = [
+    r"\bnext\s+day\b",
+    r"\bthe\s+next\s+day\b",
 ]
 
 _WEEKEND_PATTERNS = [
@@ -68,6 +84,10 @@ _FREE_DAY_PATTERNS = [
     r"\bdo\s+i\s+have\s+anything\s+on\b",
     r"\bno\s+lectures\b",
 ]
+
+_DAYS_AGO_RE = re.compile(r"\b(\d{1,2})\s+days?\s+ago\b", re.I)
+_NEXT_N_DAYS_RE = re.compile(r"\bnext\s+(\d{1,2})\s+days?\b", re.I)
+_NEXT_DAY_NAME_RE = re.compile(r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b", re.I)
 
 def _start_of_week(d: date) -> date:
     return d - timedelta(days=d.weekday())  # Monday
@@ -96,6 +116,15 @@ def _wants_free_days(q: str) -> bool:
     return _matches_any(q, _FREE_DAY_PATTERNS)
 
 
+def _day_index_from_token(token: str) -> Optional[int]:
+    t = (token or "").lower()
+    if t in _DAY_TO_INT:
+        return _DAY_TO_INT[t]
+    if t in _DAY_ABBR:
+        return _DAY_ABBR[t]
+    return None
+
+
 
 def _range_for_question(question: str) -> Tuple[datetime, datetime, str, str]:
     """
@@ -105,6 +134,60 @@ def _range_for_question(question: str) -> Tuple[datetime, datetime, str, str]:
     q = (question or "").lower()
     today = datetime.now(TZ).date()
     day_idx = _parse_day_name(q)
+
+    # explicit "next friday" style phrasing
+    m_next_day_name = _NEXT_DAY_NAME_RE.search(q)
+    if m_next_day_name:
+        target_idx = _day_index_from_token(m_next_day_name.group(1))
+        if target_idx is not None:
+            days_ahead = (target_idx - today.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            target_date = today + timedelta(days=days_ahead)
+            start = datetime.combine(target_date, time.min, tzinfo=TZ)
+            end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)
+            return start, end, target_date.isoformat(), "day"
+
+    # relative past day e.g. "3 days ago"
+    m_days_ago = _DAYS_AGO_RE.search(q)
+    if m_days_ago:
+        days_back = max(1, min(int(m_days_ago.group(1)), 60))
+        target_date = today - timedelta(days=days_back)
+        start = datetime.combine(target_date, time.min, tzinfo=TZ)
+        end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)
+        return start, end, target_date.isoformat(), "day"
+
+    # relative future window e.g. "next 2 days"
+    m_next_days = _NEXT_N_DAYS_RE.search(q)
+    if m_next_days:
+        days = max(1, min(int(m_next_days.group(1)), 60))
+        start = datetime.combine(today, time.min, tzinfo=TZ)
+        end = datetime.combine(today + timedelta(days=days), time.min, tzinfo=TZ)
+        return start, end, f"next {days} days", "next_n_days"
+
+    # previous month window
+    if _matches_any(q, _LAST_MONTH_PATTERNS):
+        first_of_this_month = today.replace(day=1)
+        last_day_prev_month = first_of_this_month - timedelta(days=1)
+        first_of_prev_month = last_day_prev_month.replace(day=1)
+        start = datetime.combine(first_of_prev_month, time.min, tzinfo=TZ)
+        end = datetime.combine(first_of_this_month, time.min, tzinfo=TZ)
+        label = f"last month ({first_of_prev_month.isoformat()} to {last_day_prev_month.isoformat()})"
+        return start, end, label, "month"
+
+    # LAST WEEK
+    if _matches_any(q, _LAST_WEEK_PATTERNS):
+        start_week = _start_of_week(today) - timedelta(days=7)
+        if day_idx is None:
+            start = datetime.combine(start_week, time.min, tzinfo=TZ)
+            end = datetime.combine(start_week + timedelta(days=7), time.min, tzinfo=TZ)
+            label = f"last week ({start_week.isoformat()} to {(start_week + timedelta(days=6)).isoformat()})"
+            return start, end, label, "week"
+
+        target_date = start_week + timedelta(days=day_idx)
+        start = datetime.combine(target_date, time.min, tzinfo=TZ)
+        end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)
+        return start, end, target_date.isoformat(), "day"
 
     # NEXT WEEK
     if _matches_any(q, _NEXT_WEEK_PATTERNS):
@@ -147,6 +230,18 @@ def _range_for_question(question: str) -> Tuple[datetime, datetime, str, str]:
 
     # TOMORROW / TODAY
     if "tomorrow" in q:
+        target_date = today + timedelta(days=1)
+        start = datetime.combine(target_date, time.min, tzinfo=TZ)
+        end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)
+        return start, end, target_date.isoformat(), "day"
+
+    if "yesterday" in q:
+        target_date = today - timedelta(days=1)
+        start = datetime.combine(target_date, time.min, tzinfo=TZ)
+        end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)
+        return start, end, target_date.isoformat(), "day"
+
+    if _matches_any(q, _NEXT_DAY_PATTERNS):
         target_date = today + timedelta(days=1)
         start = datetime.combine(target_date, time.min, tzinfo=TZ)
         end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ)

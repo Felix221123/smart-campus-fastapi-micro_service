@@ -81,7 +81,7 @@ def route(question: str, pending_action: Optional[Dict] = None) -> Dict[str, str
     if SPACE_BOOKING_KEYWORDS.search(q):
         return {"tool": "space_booking", "reason": "booking_intent"}
 
-    # ✅ events before timetable, and events needs “events-ish” words
+    # events before timetable, and events needs “events-ish” words
     if EVENTS_KEYWORDS.search(q):
         return {"tool": "events", "reason": "events_intent"}
 

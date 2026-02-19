@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from src.module.models import Space, SpaceBooking, BookingStatus  
+from src.module.models import Space, SpaceBooking, BookingStatus
 
 
 TZ = ZoneInfo(os.getenv("APP_TZ", "Europe/London"))
@@ -19,9 +19,9 @@ TZ = ZoneInfo(os.getenv("APP_TZ", "Europe/London"))
 SLOT_LEN = timedelta(hours=1)
 
 WEEKDAY_OPEN = time(9, 0)
-WEEKDAY_CLOSE = time(22, 0)  
+WEEKDAY_CLOSE = time(22, 0)
 WEEKEND_OPEN = time(9, 0)
-WEEKEND_CLOSE = time(17, 0)  
+WEEKEND_CLOSE = time(17, 0)
 
 
 _DAY_TO_INT = {
@@ -413,7 +413,7 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
     target_date = _parse_day_offset(question, today) or today
     tod = _parse_time_of_day(question)
 
-    # ✅ If no time provided, ask (unless "right now/now/asap")
+    # If no time provided, ask (unless "right now/now/asap")
     if tod is None and not _RIGHT_NOW_RE.search(q):
         hours = _opening_hours_text(target_date)
         return {
@@ -427,7 +427,7 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
             ),
         }
 
-    # ✅ If "right now", choose next valid slot
+    # If "right now", choose next valid slot
     if tod is None and _RIGHT_NOW_RE.search(q):
         start_local = _ensure_valid_slot_start(now_local)
         nxt = _next_slot_with_any_space(db, start_local, location_hint, max_checks=12)
@@ -450,7 +450,7 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
             "slot_minutes": 60,
         }
 
-    # ✅ Time provided: build slot → options; if none, suggest next slot yes/no
+    # Time provided: build slot → options; if none, suggest next slot yes/no
     start_local = datetime.combine(target_date, tod, tzinfo=TZ)
     start_local = _ensure_valid_slot_start(start_local)
     end_local = start_local + SLOT_LEN

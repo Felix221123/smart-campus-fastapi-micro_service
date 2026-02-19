@@ -62,28 +62,76 @@ _CANCEL_RE = re.compile(r"\b(cancel|stop|nevermind|never mind|forget it|abort|dr
 
 # Default TTLs (seconds)
 _PENDING_TTL_DEFAULT = {
-    "rag_pick": 300,        
-    "space_booking": 600,   
+    "rag_pick": 300,
+    "space_booking": 600,
 }
 
 
 _YES_RE = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|confirm|book it)\b", re.I)
 _NO_RE = re.compile(r"\b(no|nah|nope|cancel)\b", re.I)
+_QUESTION_WORD_RE = re.compile(r"\b(what|which|when|where|who|why|how|can\s+i|could\s+i|do\s+i)\b", re.I)
+_LINK_REQUEST_RE = re.compile(r"\b(link|url|website|site|send\s+me\s+the\s+link|where\s+is\s+the\s+link)\b", re.I)
+_MULTI_CHOICE_RE = re.compile(r"\b(options?|list|show\s+me|which\s+one|compare|choices?)\b", re.I)
+_SEED_PREFIX_RE = re.compile(r"^\s*seed\s*doc\s*:\s*", re.I)
+_INTERNAL_NOTE_RE = re.compile(
+    r"\b(voice-agent\s*tip|in-app\s*tip|best\s*practice|always\s+link|your\s+app\s+should|"
+    r"your\s+agent\s+should|store\s+link\s+if\s+you\s+ingest|public\s+guidance)\b",
+    re.I,
+)
 
 
 
 def _build_rag_options(hits: list[dict], max_options: int = 5) -> list[dict]:
+    def _shorten(text: str, limit: int = 140) -> str:
+        clean = " ".join((text or "").split())
+        if len(clean) <= limit:
+            return clean
+        return clean[: limit - 1].rstrip() + "…"
+
     opts = []
-    for h in (hits or [])[:max_options]:
+    seen: set[tuple[str, str]] = set()
+    for h in (hits or []):
+        key = (str(h.get("uri") or ""), str(h.get("document_title") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
         opts.append({
             "title": h.get("document_title"),
             "uri": h.get("uri"),
-            "snippet": h.get("text"),
+            "snippet": _shorten(h.get("text") or ""),
             "chunk_id": h.get("chunk_id"),
             "document_id": h.get("document_id"),
             "similarity": h.get("similarity"),
         })
+        if len(opts) >= max_options:
+            break
     return opts
+
+
+def _is_link_request(text: str) -> bool:
+    return bool(_LINK_REQUEST_RE.search(text or ""))
+
+
+def _should_require_rag_choice(question: str, hits: list[dict]) -> bool:
+    q = (question or "").strip().lower()
+    if not hits:
+        return False
+    if _is_link_request(q):
+        return False
+    return bool(_MULTI_CHOICE_RE.search(q))
+
+
+def _clean_user_title(title: str) -> str:
+    return _SEED_PREFIX_RE.sub("", (title or "").strip())
+
+
+def _clean_user_snippet(text: str) -> str:
+    clean = " ".join((text or "").split())
+    if not clean:
+        return ""
+    if _INTERNAL_NOTE_RE.search(clean):
+        return ""
+    return clean
 
 def _extract_option_number(text: str) -> Optional[int]:
     t = (text or "").lower()
@@ -104,6 +152,125 @@ def _extract_option_number(text: str) -> Optional[int]:
         return int(m2.group(1))
 
     return None
+
+
+def _is_repeat_or_cancel(text: str) -> bool:
+    q = text or ""
+    return bool(_REPEAT_OPTIONS_RE.search(q) or _CANCEL_RE.search(q))
+
+
+def _looks_like_new_question(text: str) -> bool:
+    q = (text or "").strip()
+    if not q:
+        return False
+    if _is_repeat_or_cancel(q):
+        return False
+    if _extract_option_number(q) is not None:
+        return False
+    ql = q.lower()
+    return "?" in ql or bool(_QUESTION_WORD_RE.search(ql))
+
+
+def _best_link_from_tool_output(tool_output: Dict[str, Any]) -> Optional[str]:
+    chosen = tool_output.get("chosen")
+    if isinstance(chosen, dict) and chosen.get("uri"):
+        return str(chosen["uri"])
+
+    options = tool_output.get("options") or []
+    for option in options:
+        if isinstance(option, dict) and option.get("uri"):
+            return str(option["uri"])
+
+    hits = tool_output.get("hits") or []
+    for hit in hits:
+        if isinstance(hit, dict) and hit.get("uri"):
+            return str(hit["uri"])
+
+    return None
+
+
+def _ensure_link_in_answer(answer: str, tool_output: Dict[str, Any], question: str) -> str:
+    link = _best_link_from_tool_output(tool_output)
+    if not link:
+        return answer
+
+    if link in (answer or ""):
+        return answer
+
+    q = (question or "").lower()
+    asks_for_link = "link" in q or "url" in q or "website" in q
+    if asks_for_link:
+        return f"{(answer or '').rstrip()} Here’s the link: {link}".strip()
+
+    # Always include at least one relevant link when available
+    return f"{(answer or '').rstrip()} You can check it here: {link}".strip()
+
+
+def _option_label(idx: int) -> str:
+    if idx == 1:
+        return "option 1"
+    if idx == 2:
+        return "option 2"
+    return f"option {idx}"
+
+
+def _pick_intro_from_answer(answer: str) -> str:
+    text = (answer or "").strip()
+    if not text:
+        return "I found a few relevant options."
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    kept: list[str] = []
+    for ln in lines:
+        lower = ln.lower()
+        if lower.startswith("here are your options"):
+            continue
+        if re.match(r"^option\s*\d+\s*:", ln, re.I):
+            continue
+        if "which option would you like" in lower:
+            continue
+        kept.append(ln)
+
+    if not kept:
+        return "I found a few relevant options."
+
+    return kept[0]
+
+
+def _render_option_line(index: int, option: Dict[str, Any]) -> str:
+    title = _clean_user_title(option.get("title") or f"Option {index}")
+    uri = option.get("uri")
+    snippet = option.get("snippet") or option.get("description") or option.get("text") or ""
+    snippet = _clean_user_snippet(snippet)
+
+    title_part = f"[{title}]({uri})" if uri else str(title)
+    if snippet:
+        return f"Option {index}: {title_part} — {snippet}"
+    return f"Option {index}: {title_part}"
+
+
+def _format_choice_answer(answer: str, tool_output: Dict[str, Any]) -> str:
+    options = tool_output.get("options") or []
+    if not options:
+        return answer
+
+    intro = _pick_intro_from_answer(answer)
+    lines = [intro, "", "Here are your options:"]
+
+    max_options = min(5, len(options))
+    for i in range(max_options):
+        lines.append(_render_option_line(i + 1, options[i]))
+
+    if max_options == 1:
+        lines.append("")
+        lines.append("Which option would you like more details on? Say ‘option 1’.")
+    else:
+        lines.append("")
+        lines.append(
+            f"Which option would you like more details on? Say ‘{_option_label(1)}’ or ‘{_option_label(max_options)}’."
+        )
+
+    return "\n".join(lines).strip()
 
 
 def _pending_is_expired(pending: Optional[Dict[str, Any]]) -> bool:
@@ -207,6 +374,14 @@ def run(
         _clear_pending(db, cid, meta, reason="pending_expired")
         pending = None
 
+    # Skip stale non-booking option picks when user asks a new question.
+    if pending and pending.get("type") != "space_booking":
+        keep_pending_for_link = pending.get("type") == "rag_pick" and _is_link_request(question)
+        if _looks_like_new_question(question):
+            if not keep_pending_for_link:
+                _clear_pending(db, cid, meta, reason="topic_switched_from_pending_non_booking")
+                pending = None
+
     # 3) store user message
     append_message(db, cid, role="user", content=question)
 
@@ -241,6 +416,16 @@ def run(
                 "options": options,
                 "requires_user_choice": True,
             }
+        elif _is_link_request(question) and options:
+            chosen = options[0]
+            tool_output = {
+                "chosen_option": 1,
+                "chosen": chosen,
+                "summary": "Here’s the official link.",
+            }
+            meta["pending_action"] = None
+            set_metadata(db, cid, meta)
+            pending = None
         elif selection is None or selection < 1 or selection > len(options):
             tool_output = {
                 "error": "missing_selection",
@@ -261,7 +446,7 @@ def run(
             pending = None
 
     # --- handle booking confirmation step (select, repeat options, or cancel) ---
-    
+
     if not tool_output and tool == "space_booking" and pending and pending.get("type") == "space_booking":
         step = pending.get("step", "choose_space")
         options = pending.get("options", [])
@@ -462,7 +647,7 @@ def run(
             hits = tool_output.get("hits") or []
             options = _build_rag_options(hits, max_options=5)
 
-            if options:
+            if options and _should_require_rag_choice(question, hits):
                 tool_output["options"] = options
                 tool_output["requires_user_choice"] = True
                 meta["pending_action"] = {
@@ -473,6 +658,11 @@ def run(
                     "original_question": question,
                 }
                 set_metadata(db, cid, meta)
+            elif options:
+                top = options[0]
+                tool_output["chosen"] = top
+                if top.get("snippet"):
+                    tool_output["summary"] = top.get("snippet")
 
     latency_ms = int((time.time() - t0) * 1000)
     log_event(db, cid, user_id, "tool_result", {"tool": tool, "latency_ms": latency_ms})
@@ -482,6 +672,9 @@ def run(
     # 7) compose final response via LLM
     history = recent_messages(db, cid, limit=12)
     answer = _compose_answer(question, tool, tool_output, history, user_ctx)
+    if tool_output.get("requires_user_choice") and tool_output.get("options"):
+        answer = _format_choice_answer(answer, tool_output)
+    answer = _ensure_link_in_answer(answer, tool_output, question)
 
     # 8) store assistant message
     append_message(

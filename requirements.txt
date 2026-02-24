@@ -14,3 +14,10 @@ torch
 Pillow
 requests
 httpx
+
+PyJWT
+python-jose[cryptography]
+python-multipart
+
+# WebSocket support (already included in fast api, but explicit for clarity)
+websockets

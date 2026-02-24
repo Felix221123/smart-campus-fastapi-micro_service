@@ -2,12 +2,12 @@
 
 from fastapi import APIRouter
 from .module.views import router as module_router
-
+from .chat.router import router as chat_router
 
 
 router = APIRouter()
 router.include_router(module_router)
-
+router.include_router(chat_router)
 
 
 

@@ -10,7 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load environment variables
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(
+    title="Smart Campus Assistant API",
+    description="A microservices architecture using FastAPI for smart campus assistant functionalities, including knowledge management and chat services.",
+    version="1.0.0",
+)
 
 origins = [
     "http://localhost:5173",

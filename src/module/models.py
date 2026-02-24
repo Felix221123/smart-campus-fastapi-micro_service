@@ -29,9 +29,9 @@ from sqlalchemy import text
 
 Base = declarative_base()
 
-# -----------------------------
+
 # Config (schema + embeddings)
-# -----------------------------
+
 DB_SCHEMA = os.getenv("DB_SCHEMA", "public")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))  # change if you use a different embedding model
 
@@ -40,9 +40,9 @@ def _table_args():
     return {"schema": DB_SCHEMA}
 
 
-# -----------------------------
+
 # Mixins
-# -----------------------------
+
 class UUIDPrimaryKeyMixin:
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -51,22 +51,36 @@ class CreatedAtMixin:
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-# -----------------------------
-# Core / minimal User (for FKs)
-# keeps parity with TypeORM relations.
-# -----------------------------
+
+# User Model (for authentication, roles, and linking to other services)
+
 class User(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "users"
     __table_args__ = _table_args()
 
-    # minimal fields (extend as needed)
-    email = Column(String, unique=True, nullable=True, index=True)
-    full_name = Column("full_name",String, nullable=True)
+    full_name = Column(String, nullable=False)
+    university_id = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False, index=True)
+    bio = Column(String, nullable=True)
+    password = Column(String, nullable=False)
+    role = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    status = Column(String, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+    sessionToken = Column(Text, nullable=True)
+
+    # Student fields
+    programme = Column(String, nullable=True)
+    year_of_study = Column(String, nullable=True)
+
+    # Staff fields
+    department = Column(String, nullable=True)
+    officeLocation = Column(String, nullable=True)
 
 
-# -----------------------------
+
 # Academic Service
-# -----------------------------
+
 class Module(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "modules"
     __table_args__ = _table_args()
@@ -142,9 +156,9 @@ class TimetableEntry(Base, UUIDPrimaryKeyMixin):
     module = relationship("Module", back_populates="timetable_entries")
 
 
-# -----------------------------
+
 # Societies / Events Service
-# -----------------------------
+
 class Society(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "societies"
     __table_args__ = _table_args()
@@ -177,9 +191,9 @@ class Event(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     organiser_society = relationship("Society", back_populates="events")
 
 
-# -----------------------------
+
 # Space Finder / Booking Service
-# -----------------------------
+
 class Space(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "spaces"
     __table_args__ = _table_args()
@@ -233,9 +247,9 @@ class SpaceBooking(Base, UUIDPrimaryKeyMixin):
     user = relationship("User")
 
 
-# -----------------------------
+
 # Housing Service
-# -----------------------------
+
 class HousingListing(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "housing_listings"
     __table_args__ = _table_args()
@@ -263,9 +277,9 @@ class HousingListing(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     owner = relationship("User")
 
 
-# -----------------------------
+
 # Notifications Service
-# -----------------------------
+
 class Notification(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "notifications"
     __table_args__ = _table_args()
@@ -287,9 +301,9 @@ class Notification(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     user = relationship("User")
 
 
-# -----------------------------
+
 # Library Service
-# -----------------------------
+
 class LibraryResource(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "library_resources"
     __table_args__ = _table_args()
@@ -302,9 +316,9 @@ class LibraryResource(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     is_available = Column(Boolean, nullable=False, default=True)
 
 
-# -----------------------------
+
 # Lost & Found Service
-# -----------------------------
+
 class LostFoundItem(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "lost_found"
     __table_args__ = _table_args()
@@ -326,9 +340,9 @@ class LostFoundItem(Base, UUIDPrimaryKeyMixin):
     reporter = relationship("User")
 
 
-# -----------------------------
+
 # Knowledge / RAG Service (Documents, Chunks, Embeddings)
-# -----------------------------
+
 class Document(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "documents"
     __table_args__ = _table_args()
@@ -363,7 +377,7 @@ class VectorEmbedding(Base, UUIDPrimaryKeyMixin):
     __table_args__ = _table_args()
 
     chunk_id = Column(UUID(as_uuid=True), ForeignKey(f"{DB_SCHEMA}.knowledge_chunks.id", ondelete="CASCADE"), nullable=False, index=True)
-    text_embedding = Column(Text, nullable=True)  
+    text_embedding = Column(Text, nullable=True)
     embedding = Column(Vector(EMBEDDING_DIM), nullable=True)  # new pgvector column
 
     chunk = relationship("KnowledgeChunk", back_populates="embeddings")
@@ -445,7 +459,7 @@ class AssistantMessage(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    role = Column(String, nullable=False)  
+    role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
 
     tool_name = Column(String, nullable=True)

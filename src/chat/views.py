@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, status
 from sqlalchemy.orm import Session
 
-from src.database import get_db
+from src.database import get_db, get_db_session
 from src.auth import get_current_user, get_current_user_ws
 from src.module.models import User
 from src.chat.schemas import (
@@ -141,41 +141,25 @@ def get_chat_history(
 
 
 # WebSocket Endpoint
-
-
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
     token: str = Query(...),
-    db: Session = Depends(get_db)
 ):
     """
     WebSocket endpoint for real-time chat.
-    Connect with: ws://localhost:8000/chat/ws?token=YOUR_JWT_TOKEN
-
-    Message format (client -> server):
-    {
-        "type": "message" | "typing" | "join_room" | "leave_room",
-        "data": {
-            "chat_room_id": "uuid",
-            "content": "text" (for messages),
-            "is_typing": true/false (for typing indicators)
-        }
-    }
-
-    Message format (server -> client):
-    {
-        "type": "message" | "typing" | "presence" | "error",
-        "data": { ... }
-    }
+     FIXED: Manual DB session management to prevent connection pool exhaustion
     """
 
-    # Authenticate user
+    #  Create a dedicated DB session for authentication
+    db = get_db_session()
     try:
         user = await get_current_user_ws(token, db)
     except ValueError as e:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))
         return
+    finally:
+        db.close()  #  Close auth session immediately
 
     # Connect user
     await manager.connect(websocket, user.id)
@@ -193,7 +177,8 @@ async def websocket_endpoint(
             payload = message_data.get("data", {})
 
             if message_type == "message":
-                # Send message via REST logic
+                #  Create NEW session for each message operation
+                db = get_db_session()
                 try:
                     room_id = UUID(payload["chat_room_id"])
                     content = payload["content"]
@@ -219,7 +204,8 @@ async def websocket_endpoint(
                                 "sender": {
                                     "id": str(message.sender.id),
                                     "full_name": message.sender.full_name,
-                                    "email": message.sender.email
+                                    "email": message.sender.email,
+                                    "role": message.sender.role
                                 }
                             }
                         },
@@ -232,9 +218,11 @@ async def websocket_endpoint(
                         "type": "error",
                         "data": {"message": str(e)}
                     })
+                finally:
+                    db.close()  #  Always close session
 
             elif message_type == "typing":
-                # Broadcast typing indicator
+                # Typing doesn't need DB - no session needed
                 try:
                     room_id = UUID(payload["chat_room_id"])
                     is_typing = payload.get("is_typing", False)

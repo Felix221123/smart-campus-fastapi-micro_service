@@ -4,7 +4,7 @@
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from src.chat.models import ChatRoomType
 
 
@@ -19,6 +19,9 @@ class UserBasic(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            UUID: lambda v: str(v)
+        }
 
 
 
@@ -38,6 +41,9 @@ class MessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            UUID: lambda v: str(v)
+        }
 
 
 
@@ -45,7 +51,7 @@ class MessageResponse(BaseModel):
 
 class ChatRoomCreate(BaseModel):
     type: ChatRoomType
-    participant_ids: List[UUID]  # List of user IDs to add to the room
+    participant_ids: List[UUID]   
 
 
 class ChatRoomResponse(BaseModel):
@@ -57,6 +63,9 @@ class ChatRoomResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            UUID: lambda v: str(v)
+        }
 
 
 class ChatRoomDetail(BaseModel):
@@ -68,6 +77,9 @@ class ChatRoomDetail(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            UUID: lambda v: str(v)
+        }
 
 
 

@@ -86,6 +86,7 @@ class Message(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     chat_room_id = Column(
+        "chatRoomId",
         UUID(as_uuid=True),
         ForeignKey(f"{DB_SCHEMA}.chat_rooms.id", ondelete="CASCADE"),
         nullable=False,
@@ -93,6 +94,7 @@ class Message(Base):
     )
 
     sender_id = Column(
+        "senderId",
         UUID(as_uuid=True),
         ForeignKey(f"{DB_SCHEMA}.users.id", ondelete="CASCADE"),
         nullable=False,

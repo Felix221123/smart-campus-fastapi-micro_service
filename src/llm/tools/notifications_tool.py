@@ -5,11 +5,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from src.module.models import Notification  
+from src.module.models import Notification
 
 
 def run(db: Session, user_id: str, limit: int = 10) -> Dict[str, Any]:
-    now = datetime.utcnow()
+    now = datetime.now()
 
     rows = (
         db.query(

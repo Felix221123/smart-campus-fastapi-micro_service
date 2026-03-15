@@ -15,7 +15,6 @@ from uuid import UUID
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-
 # Pydantic Schemas
 
 class UserSearchResponse(BaseModel):

@@ -9,7 +9,10 @@ import re
 # Option selection (rag or booking)
 _OPTION_RE = re.compile(r"\b(?:option\s*)?([1-9]\d*)\b", re.I)
 _RAG_SELECT_RE = re.compile(r"\b(option\s*[1-9]\d*|first|second|third|fourth|fifth|1st|2nd|3rd)\b", re.I)
-_BOOKING_CONTINUE_RE = re.compile(r"\b(book|confirm|reserve|option\s*[1-9]\d*|cancel|stop|yes|yeah|yep|sure|ok|okay|no|nah)\b", re.I)
+_BOOKING_CONTINUE_RE = re.compile(
+    r"\b(confirm|reserve|option\s*[1-9]\d*|cancel|stop|yes|yeah|yep|sure|ok|okay|no|nah)\b",
+    re.I,
+)
 
 # keep "time range" separate so it doesn't hijack intent
 TIME_RANGE_RE = re.compile(
@@ -46,6 +49,15 @@ ASSESSMENTS_KEYWORDS = re.compile(
     re.I,
 )
 
+LIBRARY_KEYWORDS = re.compile(
+    r"\b("
+    r"book|books|ebook|e-book|audiobook|audio\s*book|journal|journals|novel|novels|"
+    r"author|authors|borrow|lend|loan|catalog|catalogue|memoir|memoirs|"
+    r"autobiography|autobiographies|biography|biographies|library\s+resource|library\s+book"
+    r")\b",
+    re.I,
+)
+
 SPACES_KEYWORDS = re.compile(
     r"\b(space|study\s+space|quiet\s+place|silent\s+zone|library|where\s+can\s+i\s+study|accessible|wheelchair|"
     r"group\s+space|collab|meeting)\b",
@@ -53,7 +65,12 @@ SPACES_KEYWORDS = re.compile(
 )
 
 SPACE_BOOKING_KEYWORDS = re.compile(
-    r"\b(book|booking|reserve|reservation|book\s+a\s+room|reserve\s+a\s+room|study\s*room|pod)\b",
+    r"\b("
+    r"booking|reservation|reserve|"
+    r"book\s+(?:a\s+)?(?:room|space|study\s*room|pod)|"
+    r"reserve\s+(?:a\s+)?(?:room|space|study\s*room|pod)|"
+    r"study\s*room|pod"
+    r")\b",
     re.I,
 )
 
@@ -63,17 +80,21 @@ NOTIFICATIONS_KEYWORDS = re.compile(r"\b(notification|notifications|remind|remin
 def route(question: str, pending_action: Optional[Dict] = None) -> Dict[str, str]:
     q = (question or "").lower()
 
-    # 1) Pending RAG pick (only if they’re actually selecting)
+    # Pending RAG pick (only if they’re actually selecting)
     if pending_action and pending_action.get("type") == "rag_pick":
         if _RAG_SELECT_RE.search(q):
             return {"tool": "rag", "reason": "pending_rag_pick_selection"}
 
-    # 2) Pending booking (only if continuing booking flow)
+    if pending_action and pending_action.get("type") == "library_pick":
+        if _RAG_SELECT_RE.search(q):
+            return {"tool": "library", "reason": "pending_library_pick_selection"}
+
+    # Pending booking (only if continuing booking flow)
     if pending_action and pending_action.get("type") == "space_booking":
         if _BOOKING_CONTINUE_RE.search(q) or _OPTION_RE.search(q) or _TIME_REPLY_RE.search(q):
             return {"tool": "space_booking", "reason": "pending_booking_continue"}
 
-    # 3) Normal routing (order matters)
+    # Normal routing (order matters)
     if NOTIFICATIONS_KEYWORDS.search(q):
         return {"tool": "notifications", "reason": "notification_intent"}
 
@@ -96,7 +117,12 @@ def route(question: str, pending_action: Optional[Dict] = None) -> Dict[str, str
     if ASSESSMENTS_KEYWORDS.search(q):
         return {"tool": "assessments", "reason": "assessments_intent"}
 
-    if SPACES_KEYWORDS.search(q):
-        return {"tool": "spaces", "reason": "spaces_intent"}
+    if LIBRARY_KEYWORDS.search(q) and not re.search(
+    r"\b(book|reserve)\s+(?:a\s+)?(?:room|space|study\s*room|pod)\b", q, re.I
+    ):
+        return {"tool": "library", "reason": "library_intent"}
+
+    if SPACE_BOOKING_KEYWORDS.search(q):
+        return {"tool": "space_booking", "reason": "booking_intent"}
 
     return {"tool": "rag", "reason": "fallback_to_rag"}

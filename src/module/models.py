@@ -304,7 +304,7 @@ class Notification(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
 # Library Service
 
-class LibraryResource(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
+class LibraryResource(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "library_resources"
     __table_args__ = _table_args()
 

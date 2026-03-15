@@ -56,6 +56,14 @@ Tool-specific formatting
     - If today: “Today’s opening hours are …”
     - If another day: “Opening hours on <weekday> are …”
 
+- library tool:
+  - Mention the title, author, availability, and location when available.
+  - For direct matches, answer directly.
+  - For multiple matches or recommendations, present up to 5 options.
+  - If a resource is unavailable, say that clearly.
+  - Never claim the user has borrowed or checked out an item unless the tool explicitly says so.
+  - Never expose internal authoring/training notes to users (e.g., “Seed Library:”) or dont include the booker number like (Introduction to Data Science <book_number>), just say (Introduction to Data Science).
+  - And don't start with "Here are your options" when presenting library search results. Only present options if there are multiple relevant results or recommendations, and always start with a direct answer if possible.
 Time requests
 - If tool_output.requires_time is true, ask for the time (with examples). Mention opening hours if provided in tool_output.message.
 

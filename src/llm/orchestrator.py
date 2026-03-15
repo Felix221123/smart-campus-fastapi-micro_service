@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 import openai
 from sqlalchemy.orm import Session
+import json
 
 from src.llm.cache import cache, make_key
 from src.module.models import User
@@ -41,7 +42,9 @@ from src.llm.tools import (
     rag_tool,
     notifications_tool,
     space_booking_tool,
+    library_tool,
 )
+from src.analytics.tracking import log_query_analytics
 
 client = openai.OpenAI()
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
@@ -64,6 +67,7 @@ _CANCEL_RE = re.compile(r"\b(cancel|stop|nevermind|never mind|forget it|abort|dr
 _PENDING_TTL_DEFAULT = {
     "rag_pick": 300,
     "space_booking": 600,
+    "library_pick": 300,
 }
 
 
@@ -96,9 +100,9 @@ def _build_rag_options(hits: list[dict], max_options: int = 5) -> list[dict]:
             continue
         seen.add(key)
         opts.append({
-            "title": h.get("document_title"),
+            "title": _shorten(h.get("document_title")),
             "uri": h.get("uri"),
-            "snippet": _shorten(h.get("text") or ""),
+            "snippet": _shorten(h.get("text")),
             "chunk_id": h.get("chunk_id"),
             "document_id": h.get("document_id"),
             "similarity": h.get("similarity"),
@@ -170,7 +174,7 @@ def _looks_like_new_question(text: str) -> bool:
     ql = q.lower()
     return "?" in ql or bool(_QUESTION_WORD_RE.search(ql))
 
-
+# Ensure that if there’s a relevant link in the tool output, it gets included in the answer, especially if the user is asking for a link. But even if they aren’t explicitly asking for a link, we want to include it when relevant to avoid unnecessary follow-up turns.
 def _best_link_from_tool_output(tool_output: Dict[str, Any]) -> Optional[str]:
     chosen = tool_output.get("chosen")
     if isinstance(chosen, dict) and chosen.get("uri"):
@@ -188,7 +192,7 @@ def _best_link_from_tool_output(tool_output: Dict[str, Any]) -> Optional[str]:
 
     return None
 
-
+# Ensure that if there’s a relevant link in the tool output, it gets included in the answer, especially if the user is asking for a link. But even if they aren’t explicitly asking for a link, we want to include it when relevant to avoid unnecessary follow-up turns.
 def _ensure_link_in_answer(answer: str, tool_output: Dict[str, Any], question: str) -> str:
     link = _best_link_from_tool_output(tool_output)
     if not link:
@@ -213,7 +217,7 @@ def _option_label(idx: int) -> str:
         return "option 2"
     return f"option {idx}"
 
-
+# Pick the intro sentence from the answer to show above options, stripping out any existing option lists or internal notes. If no good intro is found, return a default intro.
 def _pick_intro_from_answer(answer: str) -> str:
     text = (answer or "").strip()
     if not text:
@@ -248,7 +252,7 @@ def _render_option_line(index: int, option: Dict[str, Any]) -> str:
         return f"Option {index}: {title_part} — {snippet}"
     return f"Option {index}: {title_part}"
 
-
+# Format the answer for a choice flow, including the intro and options, based on the tool output. Only used when requires_user_choice is true. For non-choice answers, we want to keep it more concise and just give the direct answer without re-listing options.
 def _format_choice_answer(answer: str, tool_output: Dict[str, Any]) -> str:
     options = tool_output.get("options") or []
     if not options:
@@ -272,7 +276,7 @@ def _format_choice_answer(answer: str, tool_output: Dict[str, Any]) -> str:
 
     return "\n".join(lines).strip()
 
-
+# Check if pending action is expired based on created_at and ttl_sec. If expired, return True to indicate it should be cleared.
 def _pending_is_expired(pending: Optional[Dict[str, Any]]) -> bool:
     if not pending:
         return False
@@ -290,8 +294,7 @@ def _clear_pending(db: Session, cid: str, meta: Dict[str, Any], reason: str) -> 
     log_event(db, cid, meta.get("user_id"), "pending_cleared", {"reason": reason})
 
 
-
-
+# Load user context (e.g., name) to personalize responses. Cache for 5 minutes to avoid DB hits on every turn.
 def _get_user_ctx(db: Session, user_id: Optional[str]) -> Dict[str, Any]:
     if not user_id:
         return {}
@@ -306,8 +309,23 @@ def _get_user_ctx(db: Session, user_id: Optional[str]) -> Dict[str, Any]:
     return ctx
 
 
+# Try to give a direct answer if we can, to minimize unnecessary multi-turn when the tool already gives a good answer or when the user is asking for a link.
+def _direct_answer(tool: str, tool_output: Dict[str, Any]) -> Optional[str]:
+    if tool_output.get("message"):
+        return str(tool_output["message"])
 
+    if tool_output.get("summary") and not tool_output.get("requires_user_choice"):
+        return str(tool_output["summary"])
 
+    if tool_output.get("error") and tool_output.get("message"):
+        return str(tool_output["message"])
+
+    if tool == "space_booking" and tool_output.get("requires_time"):
+        return str(tool_output.get("message", "Please give a time like 3pm or 15:00."))
+
+    return None
+
+# Compose the final answer to return to the user, based on the tool output and question.
 def _compose_answer(question: str, tool: str, tool_output: Dict[str, Any], history: list[dict], user_ctx: Dict[str, Any]) -> str:
     messages = [{"role": "system", "content": ANSWER_SYSTEM}]
 
@@ -324,20 +342,19 @@ def _compose_answer(question: str, tool: str, tool_output: Dict[str, Any], histo
         {
             "role": "user",
             "content": f"""
-            User question: {question}
+User question: {question}
 
-            Tool used: {tool}
-            Tool output (JSON):
-            {tool_output}
+Tool used: {tool}
+Tool output (JSON):
+{json.dumps(tool_output, ensure_ascii=False)}
 
-            Write a short, spoken-style answer.
-            - If tool_output.requires_user_choice is true, list options as:
-            Option 1: ...
-            Option 2: ...
-            Then ask the user to pick one.
-            - If tool_output has a summary field, use it.
-            - If tool_output has an error field, explain what to do next.
-            """.strip(),
+Write a short, spoken-style answer.
+- Give the direct answer first.
+- Never say "Here are your options".
+- Never expose internal labels like "Seed Library:" or "Seed Doc:".
+- If there is a relevant link, include it naturally.
+- If there is an error, explain the next step briefly.
+""".strip(),
         }
     )
 
@@ -345,13 +362,13 @@ def _compose_answer(question: str, tool: str, tool_output: Dict[str, Any], histo
         model=LLM_MODEL,
         messages=messages,
         temperature=0.2,
-        max_tokens=350,
+        max_tokens=250,
     )
     return resp.choices[0].message.content.strip()
 
 
 
-
+# Main orchestrator function
 def run(
     db: Session,
     question: str,
@@ -406,6 +423,11 @@ def run(
             _clear_pending(db, cid, meta, reason="topic_switched_from_space_booking")
             pending = None
 
+    if pending and pending.get("type") == "library_pick" and tool != "library":
+        if selection is None and not _REPEAT_OPTIONS_RE.search(question or ""):
+            _clear_pending(db, cid, meta, reason="topic_switched_from_library_pick")
+            pending = None
+
     # --- handle pending rag pick (user choosing option OR asking to repeat options) ---
     if tool == "rag" and pending and pending.get("type") == "rag_pick":
         options = pending.get("options", [])
@@ -441,6 +463,39 @@ def run(
                 "summary": "Got it — here’s the info for that option.",
             }
             # clear pending action once chosen
+            meta["pending_action"] = None
+            set_metadata(db, cid, meta)
+            pending = None
+
+    if not tool_output and tool == "library" and pending and pending.get("type") == "library_pick":
+        options = pending.get("options", [])
+
+        if _REPEAT_OPTIONS_RE.search(question or ""):
+            tool_output = {
+                "message": "Sure — here are the library options again. Which one would you like?",
+                "options": options,
+                "requires_user_choice": True,
+            }
+        elif selection is None or selection < 1 or selection > len(options):
+            tool_output = {
+                "error": "missing_selection",
+                "message": "Please say something like 'option 1' or 'the second one'.",
+                "options": options,
+                "requires_user_choice": True,
+            }
+        else:
+            chosen = options[selection - 1]
+            availability = "available now" if chosen.get("is_available") else "currently unavailable"
+            location = chosen.get("location") or "location not listed"
+
+            tool_output = {
+                "chosen_option": selection,
+                "chosen": chosen,
+                "summary": (
+                    f"{chosen.get('title')} by {chosen.get('author')} is {availability}. "
+                    f"It’s in {location}."
+                ),
+            }
             meta["pending_action"] = None
             set_metadata(db, cid, meta)
             pending = None
@@ -597,6 +652,19 @@ def run(
             else:
                 tool_output = notifications_tool.run(db, user_id=user_id)
 
+        elif tool == "library":
+            tool_output = library_tool.run(db, question)
+
+            if tool_output.get("requires_user_choice"):
+                meta["pending_action"] = {
+                    "type": "library_pick",
+                    "created_at": time.time(),
+                    "ttl_sec": _PENDING_TTL_DEFAULT["library_pick"],
+                    "options": tool_output.get("options", []),
+                    "original_question": question,
+                }
+                set_metadata(db, cid, meta)
+
         elif tool == "space_booking":
             # new booking find step
             if not user_id:
@@ -669,14 +737,19 @@ def run(
 
     user_ctx = _get_user_ctx(db, user_id)
 
-    # 7) compose final response via LLM
-    history = recent_messages(db, cid, limit=12)
-    answer = _compose_answer(question, tool, tool_output, history, user_ctx)
-    if tool_output.get("requires_user_choice") and tool_output.get("options"):
-        answer = _format_choice_answer(answer, tool_output)
-    answer = _ensure_link_in_answer(answer, tool_output, question)
+    direct = _direct_answer(tool, tool_output)
+    if direct:
+        answer = direct
+    else:
+        # compose final response via LLM
+        history = recent_messages(db, cid, limit=12)
+        answer = _compose_answer(question, tool, tool_output, history, user_ctx)
+        if tool_output.get("requires_user_choice") and tool_output.get("options"):
+            answer = _format_choice_answer(answer, tool_output)
+        answer = _ensure_link_in_answer(answer, tool_output, question)
 
-    # 8) store assistant message
+
+    # store assistant message
     append_message(
         db,
         cid,
@@ -686,6 +759,25 @@ def run(
         tool_payload=tool_output,
         latency_ms=latency_ms,
     )
+
+    try:
+        log_query_analytics(
+            db,
+            conversation_id=cid,
+            user_id=user_id,
+            channel=channel,
+            question_text=question,
+            detected_intent=tool,
+            route_reason=routing.get("reason"),
+            tool_name=tool,
+            tool_output=tool_output,
+            latency_ms=latency_ms,
+            pending_action=meta.get("pending_action"),
+            selected_option=selection,
+        )
+    except Exception:
+        # analytics logging should never break the assistant
+        pass
 
     return {
         "conversation_id": cid,

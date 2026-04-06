@@ -376,10 +376,10 @@ def run(
     conversation_id: Optional[str] = None,
     channel: str = "web",
 ) -> Dict[str, Any]:
-    # 1) ensure conversation exists
+    # ensure conversation exists
     cid = ensure_conversation(db, user_id=user_id, channel=channel, conversation_id=conversation_id)
 
-    # 2) load metadata + pending
+    # load metadata + pending
     meta = get_metadata(db, cid) or {}
     pending = meta.get("pending_action")
 
@@ -399,10 +399,10 @@ def run(
                 _clear_pending(db, cid, meta, reason="topic_switched_from_pending_non_booking")
                 pending = None
 
-    # 3) store user message
+    # store user message
     append_message(db, cid, role="user", content=question)
 
-    # 4) route (router already ignores rag_pick/booking unless user is selecting/continuing)
+    # route (router already ignores rag_pick/booking unless user is selecting/continuing)
     routing = route(question, pending_action=pending)
     tool = routing["tool"]
     log_event(db, cid, user_id, "intent_detected", {"tool": tool, "reason": routing.get("reason")})
@@ -412,7 +412,7 @@ def run(
     q_lower = (question or "").lower()
     selection = _extract_option_number(question)
 
-    # --- If user switched topic away from a pending flow, clear it (unless they are asking to repeat options) ---
+    # If user switched topic away from a pending flow, clear it (unless they are asking to repeat options)
     if pending and pending.get("type") == "rag_pick" and tool != "rag":
         if selection is None and not _REPEAT_OPTIONS_RE.search(question or ""):
             _clear_pending(db, cid, meta, reason="topic_switched_from_rag_pick")
@@ -428,7 +428,7 @@ def run(
             _clear_pending(db, cid, meta, reason="topic_switched_from_library_pick")
             pending = None
 
-    # --- handle pending rag pick (user choosing option OR asking to repeat options) ---
+    # handle pending rag pick (user choosing option OR asking to repeat options)
     if tool == "rag" and pending and pending.get("type") == "rag_pick":
         options = pending.get("options", [])
 
@@ -500,8 +500,7 @@ def run(
             set_metadata(db, cid, meta)
             pending = None
 
-    # --- handle booking confirmation step (select, repeat options, or cancel) ---
-
+    # handle booking confirmation step (select, repeat options, or cancel)
     if not tool_output and tool == "space_booking" and pending and pending.get("type") == "space_booking":
         step = pending.get("step", "choose_space")
         options = pending.get("options", [])
@@ -632,7 +631,7 @@ def run(
         else:
             tool_output = {"summary": "Say “yes” to book the next available slot, or “no” to choose a different time."}
 
-    # 6) normal tool execution (only if we haven't produced output from pending handlers)
+    #  normal tool execution (only if we haven't produced output from pending handlers)
     if not tool_output:
         if tool == "timetable":
             tool_output = timetable_tool.run(db, question)

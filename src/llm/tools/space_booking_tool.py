@@ -217,13 +217,39 @@ def _space_has_overlap(
         db.query(SpaceBooking.id)
         .filter(
             SpaceBooking.space_id == space_id,
-            SpaceBooking.status != BookingStatus.CANCELLED,
+            SpaceBooking.status == BookingStatus.CONFIRMED,
             SpaceBooking.start_time < end_utc,
             SpaceBooking.end_time > start_utc,
         )
         .first()
     )
     return hit is not None
+
+
+_LOCATION_HINTS = [
+    ("library", ["library", "boots", "nls"]),
+    ("clifton", ["clifton"]),
+    ("city", ["city", "city campus"]),
+    ("brackenhurst", ["brackenhurst"]),
+    ("confetti", ["confetti"]),
+]
+
+def _apply_location_filter(qry, location_hint: Optional[str]):
+    if location_hint == "library":
+        return qry.filter(
+            (Space.name.ilike("%library%")) |
+            (Space.type.ilike("%library%"))
+        )
+    elif location_hint == "city":
+        return qry.filter(Space.location.ilike("%City Campus%"))
+    elif location_hint == "clifton":
+        return qry.filter(Space.location.ilike("%Clifton Campus%"))
+    elif location_hint == "brackenhurst":
+        return qry.filter(Space.location.ilike("%Brackenhurst Campus%"))
+    elif location_hint == "confetti":
+        return qry.filter(Space.location.ilike("%Confetti Campus%"))
+    return qry
+
 
 
 def _find_available_spaces_for_slot(
@@ -237,7 +263,7 @@ def _find_available_spaces_for_slot(
     subq = (
         db.query(SpaceBooking.space_id)
         .filter(
-            SpaceBooking.status != BookingStatus.CANCELLED,
+            SpaceBooking.status == BookingStatus.CONFIRMED,
             SpaceBooking.start_time < end_utc,
             SpaceBooking.end_time > start_utc,
         )
@@ -245,8 +271,7 @@ def _find_available_spaces_for_slot(
     )
 
     qry = db.query(Space).filter(~Space.id.in_(subq))
-    if location_hint:
-        qry = qry.filter(Space.location.ilike(f"%{location_hint}%"))
+    qry = _apply_location_filter(qry, location_hint)
 
     spaces = qry.limit(limit).all()
 
@@ -257,6 +282,8 @@ def _find_available_spaces_for_slot(
             "type": s.type,
             "location": s.location,
             "capacity": s.capacity,
+            "title": s.name,
+            "snippet": f"{s.type} in {s.location}. Capacity: {s.capacity}.",
         }
         for s in spaces
     ]
@@ -350,7 +377,7 @@ def find_available_spaces(
     subq = (
         db.query(SpaceBooking.space_id)
         .filter(
-            SpaceBooking.status != BookingStatus.CANCELLED,
+            SpaceBooking.status == BookingStatus.CONFIRMED,
             SpaceBooking.start_time < end_time,
             SpaceBooking.end_time > start_time,
         )
@@ -358,9 +385,7 @@ def find_available_spaces(
     )
 
     qry = db.query(Space).filter(~Space.id.in_(subq))
-
-    if location_hint:
-        qry = qry.filter(Space.location.ilike(f"%{location_hint}%"))
+    qry = _apply_location_filter(qry, location_hint)
 
     spaces = qry.limit(limit).all()
 
@@ -373,29 +398,11 @@ def find_available_spaces(
                 "type": s.type,
                 "location": s.location,
                 "capacity": s.capacity,
+                "title": s.name,
+                "snippet": f"{s.type} in {s.location}. Capacity: {s.capacity}.",
             }
         )
     return out
-
-
-def _create_booking(
-    db: Session,
-    user_id: str,
-    space_id: str,
-    start_utc: datetime,
-    end_utc: datetime,
-) -> Dict[str, Any]:
-    booking = SpaceBooking(
-        space_id=space_id,
-        user_id=user_id,
-        start_time=start_utc,
-        end_time=end_utc,
-        status=BookingStatus.CONFIRMED,
-    )
-    db.add(booking)
-    db.commit()
-    db.refresh(booking)
-    return {"booking_id": str(booking.id), "status": str(booking.status)}
 
 
 def run_find(db: Session, question: str) -> Dict[str, Any]:

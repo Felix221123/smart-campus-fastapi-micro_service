@@ -192,23 +192,29 @@ async def websocket_endpoint(
                     )
 
                     # Broadcast to room participants
-                    await manager.broadcast_to_room(
-                        {
-                            "type": "message",
-                            "data": {
-                                "id": str(message.id),
-                                "chat_room_id": str(message.chat_room_id),
-                                "sender_id": str(message.sender_id),
-                                "content": message.content,
-                                "sent_at": message.sent_at.isoformat(),
-                                "sender": {
-                                    "id": str(message.sender.id),
-                                    "full_name": message.sender.full_name,
-                                    "email": message.sender.email,
-                                    "role": message.sender.role
-                                }
+                    message_payload = {
+                        "type": "message",
+                        "data": {
+                            "id": str(message.id),
+                            "chat_room_id": str(message.chat_room_id),
+                            "sender_id": str(message.sender_id),
+                            "content": message.content,
+                            "sent_at": message.sent_at.isoformat(),
+                            "sender": {
+                                "id": str(message.sender.id),
+                                "full_name": message.sender.full_name,
+                                "email": message.sender.email,
+                                "role": message.sender.role
                             }
-                        },
+                        }
+                    }
+
+                    # Send canonical message back to sender too
+                    await manager.send_personal_message(message_payload, user.id)
+
+                    # Send to everyone else in room
+                    await manager.broadcast_to_room(
+                        message_payload,
                         room_id,
                         sender_id=user.id
                     )

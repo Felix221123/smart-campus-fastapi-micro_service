@@ -79,10 +79,18 @@ _MULTI_CHOICE_RE = re.compile(r"\b(options?|list|show\s+me|which\s+one|compare|c
 _SEED_PREFIX_RE = re.compile(r"^\s*seed\s*doc\s*:\s*", re.I)
 _INTERNAL_NOTE_RE = re.compile(
     r"\b(voice-agent\s*tip|in-app\s*tip|best\s*practice|always\s+link|your\s+app\s+should|"
-    r"your\s+agent\s+should|store\s+link\s+if\s+you\s+ingest|public\s+guidance)\b",
+    r"your\s+agent\s+should|store\s+link\s+if\s+you\s+ingest|public\s+guidance|"
+    r"good\s+ux|voice\s+query\s+pattern|example\s+pattern|filter\s+your\s+listings|"
+    r"classify\s+intent|for\s+voice-agent|your\s+listings)\b",
     re.I,
 )
 
+# Add near the top with other regexes
+_NONE_OF_THESE_RE = re.compile(
+    r"\b(none|none of (them|these|those)|not (helpful|relevant|what i need)|"
+    r"no thanks|not interested|dismiss|skip|move on)\b",
+    re.I,
+)
 
 
 def _build_rag_options(hits: list[dict], max_options: int = 5) -> list[dict]:
@@ -99,10 +107,11 @@ def _build_rag_options(hits: list[dict], max_options: int = 5) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
+        sanitized_text = _sanitise_hit_text(h.get("text") or "")
         opts.append({
             "title": _shorten(h.get("document_title")),
             "uri": h.get("uri"),
-            "snippet": _shorten(h.get("text")),
+            "snippet": _shorten(sanitized_text),
             "chunk_id": h.get("chunk_id"),
             "document_id": h.get("document_id"),
             "similarity": h.get("similarity"),
@@ -241,6 +250,34 @@ def _pick_intro_from_answer(answer: str) -> str:
     return kept[0]
 
 
+
+def _sanitise_hit_text(text: str) -> str:
+    """Remove lines containing internal seed/authoring notes from a RAG hit chunk."""
+    if not text:
+        return ""
+    clean_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            clean_lines.append(line)
+            continue
+        # Drop lines that are purely internal notes
+        if _INTERNAL_NOTE_RE.search(stripped):
+            continue
+        # Drop lines that look like UX/dev instructions (heuristic)
+        if re.match(
+            r"^(good ux|voice query pattern|example pattern|for voice-agent|"
+            r"best practice|in-app|always link|your app|your agent|"
+            r"classify intent|filter your)",
+            stripped,
+            re.I,
+        ):
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip()
+
+
+
 def _render_option_line(index: int, option: Dict[str, Any]) -> str:
     title = _clean_user_title(option.get("title") or f"Option {index}")
     uri = option.get("uri")
@@ -309,24 +346,25 @@ def _get_user_ctx(db: Session, user_id: Optional[str]) -> Dict[str, Any]:
     return ctx
 
 
-# Try to give a direct answer if we can, to minimize unnecessary multi-turn when the tool already gives a good answer or when the user is asking for a link.
 def _direct_answer(tool: str, tool_output: Dict[str, Any]) -> Optional[str]:
-    if tool_output.get("message"):
-        return str(tool_output["message"])
-
-    if tool_output.get("summary") and not tool_output.get("requires_user_choice"):
-        return str(tool_output["summary"])
-
+    # Only bypass LLM for explicit user-facing errors or booking time prompts
     if tool_output.get("error") and tool_output.get("message"):
         return str(tool_output["message"])
 
     if tool == "space_booking" and tool_output.get("requires_time"):
-        return str(tool_output.get("message", "Please give a time like 3pm or 15:00."))
+        return str(tool_output.get("message", "What time would you like? (e.g., 3pm or 15:00)"))
 
+    # Do NOT shortcircuit for `message` or `summary` on data tools — let LLM compose the answer
     return None
 
 # Compose the final answer to return to the user, based on the tool output and question.
 def _compose_answer(question: str, tool: str, tool_output: Dict[str, Any], history: list[dict], user_ctx: Dict[str, Any]) -> str:
+    safe_output = dict(tool_output)
+    if safe_output.get("hits"):
+        safe_output["hits"] = [
+            {**h, "text": _sanitise_hit_text(h.get("text") or "")}
+            for h in safe_output["hits"]
+        ]
     messages = [{"role": "system", "content": ANSWER_SYSTEM}]
 
     # getting the users name to be mentioned in the application
@@ -428,7 +466,8 @@ def run(
             _clear_pending(db, cid, meta, reason="topic_switched_from_library_pick")
             pending = None
 
-    # handle pending rag pick (user choosing option OR asking to repeat options)
+        # handle pending rag pick (user choosing option OR asking to repeat options)
+
     if tool == "rag" and pending and pending.get("type") == "rag_pick":
         options = pending.get("options", [])
 
@@ -443,11 +482,20 @@ def run(
             tool_output = {
                 "chosen_option": 1,
                 "chosen": chosen,
-                "summary": "Here’s the official link.",
+                "summary": "Here's the official link.",
             }
             meta["pending_action"] = None
             set_metadata(db, cid, meta)
             pending = None
+
+        # user explicitly rejected all options
+        elif _NONE_OF_THESE_RE.search(question or ""):
+            _clear_pending(db, cid, meta, reason="user_rejected_rag_options")
+            pending = None
+            tool_output = {
+                "summary": "No problem — I don't have more specific info on that right now. You could try rephrasing your question or I can help you with something else.",
+            }
+
         elif selection is None or selection < 1 or selection > len(options):
             tool_output = {
                 "error": "missing_selection",
@@ -460,13 +508,11 @@ def run(
             tool_output = {
                 "chosen_option": selection,
                 "chosen": chosen,
-                "summary": "Got it — here’s the info for that option.",
+                "summary": "Got it — here's the info for that option.",
             }
-            # clear pending action once chosen
             meta["pending_action"] = None
             set_metadata(db, cid, meta)
             pending = None
-
     if not tool_output and tool == "library" and pending and pending.get("type") == "library_pick":
         options = pending.get("options", [])
 
@@ -740,9 +786,8 @@ def run(
     if direct:
         answer = direct
     else:
-        # compose final response via LLM
         history = recent_messages(db, cid, limit=12)
-        answer = _compose_answer(question, tool, tool_output, history, user_ctx)
+        answer = _compose_answer(question, tool, tool_output, history, user_ctx)  # ← Always called now
         if tool_output.get("requires_user_choice") and tool_output.get("options"):
             answer = _format_choice_answer(answer, tool_output)
         answer = _ensure_link_in_answer(answer, tool_output, question)
@@ -777,6 +822,36 @@ def run(
     except Exception:
         # analytics logging should never break the assistant
         pass
+
+    rag_hits = tool_output.get("hits") or []
+    rag_hit_count = len(rag_hits)
+    rag_top_similarity = None
+    if rag_hits and rag_hits[0].get("similarity") is not None:
+        try:
+            rag_top_similarity = float(rag_hits[0].get("similarity"))
+        except (TypeError, ValueError):
+            pass
+
+    print("ASK_TRACE", json.dumps({
+        "query_id": conversation_id,
+        "question": question,
+        "detected_intent": tool,
+        "route_reason": routing.get("reason"),
+        "selected_tool": tool,
+        "latency_ms": latency_ms,
+        "answer_status": (
+            "error" if tool_output.get("error")
+            else "no_hit" if tool == "rag" and not rag_hits
+            else "needs_user_choice" if tool_output.get("requires_user_choice")
+            else "answered"
+        ),
+        "requires_user_choice": bool(tool_output.get("requires_user_choice")),
+        "has_error": bool(tool_output.get("error")),
+        "rag_hit_count": rag_hit_count,
+        "rag_top_similarity": rag_top_similarity,
+        "selected_option": selection,
+        "pending_action_type": (meta.get("pending_action") or {}).get("type"),
+    }, default=str))
 
     return {
         "conversation_id": cid,

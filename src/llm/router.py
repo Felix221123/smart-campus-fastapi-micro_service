@@ -67,9 +67,9 @@ SPACES_KEYWORDS = re.compile(
 SPACE_BOOKING_KEYWORDS = re.compile(
     r"\b("
     r"booking|reservation|reserve|"
-    r"book\s+(?:a\s+)?(?:room|space|study\s*room|pod)|"
-    r"reserve\s+(?:a\s+)?(?:room|space|study\s*room|pod)|"
-    r"study\s*room|pod"
+    r"book\s+(?:a\s+)?(?:room|space|study\s*room|library\s*room|group\s*room|pod|booth)|"
+    r"reserve\s+(?:a\s+)?(?:room|space|study\s*room|library\s*room|group\s*room|pod|booth)|"
+    r"study\s*room|library\s*room|group\s*room|pod|booth"
     r")\b",
     re.I,
 )
@@ -101,6 +101,9 @@ def route(question: str, pending_action: Optional[Dict] = None) -> Dict[str, str
     # booking has to be before spaces list
     if SPACE_BOOKING_KEYWORDS.search(q):
         return {"tool": "space_booking", "reason": "booking_intent"}
+
+    if SPACES_KEYWORDS.search(q):
+        return {"tool": "spaces", "reason": "spaces_intent"}
 
     # events before timetable, and events needs “events-ish” words
     if EVENTS_KEYWORDS.search(q):

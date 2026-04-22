@@ -22,7 +22,7 @@ def detect_intent(question: str) -> str:
 
 
 def _tomorrow_weekday_name() -> str:
-    tomorrow = datetime.utcnow().date() + timedelta(days=1)
+    tomorrow = datetime.now().date() + timedelta(days=1)
     return tomorrow.strftime("%A")  # e.g. "Monday"
 
 

@@ -13,9 +13,7 @@ from src.module.models import BookingStatus
 
 
 
-# ======================================================================================
 # Pydantic Schemas (Create/Read)
-# ======================================================================================
 
 try:
     from pydantic import ConfigDict  # pydantic v2
@@ -29,7 +27,7 @@ except Exception:  # pydantic v1 fallback
             orm_mode = True
 
 
-# --------- Modules ----------
+# Modules 
 class ModuleCreate(ORMBase):
     code: str
     name: str
@@ -42,7 +40,7 @@ class ModuleRead(ModuleCreate):
     created_at: datetime
 
 
-# --------- Assessments ----------
+# Assessments 
 class AssessmentCreate(ORMBase):
     module_id: uuid.UUID
     title: str
@@ -56,7 +54,7 @@ class AssessmentRead(AssessmentCreate):
     created_at: datetime
 
 
-# --------- Grades ----------
+# Grades 
 class GradeCreate(ORMBase):
     assessment_id: uuid.UUID
     student_id: uuid.UUID
@@ -69,7 +67,7 @@ class GradeRead(GradeCreate):
     graded_at: datetime
 
 
-# --------- Timetable ----------
+# Timetable 
 class TimetableEntryCreate(ORMBase):
     module_id: uuid.UUID
     room: str
@@ -84,7 +82,7 @@ class TimetableEntryRead(TimetableEntryCreate):
     created_at: datetime
 
 
-# --------- Societies / Events ----------
+# Societies / Events 
 class SocietyCreate(ORMBase):
     name: str
     description: str
@@ -111,7 +109,7 @@ class EventRead(EventCreate):
     created_at: datetime
 
 
-# --------- Spaces / Bookings ----------
+# Spaces / Bookings 
 class SpaceCreate(ORMBase):
     name: str
     type: str
@@ -139,7 +137,7 @@ class SpaceBookingRead(SpaceBookingCreate):
     created_at: datetime
 
 
-# --------- Housing ----------
+# Housing 
 class HousingListingCreate(ORMBase):
     owner_id: uuid.UUID
     title: str
@@ -159,7 +157,7 @@ class HousingListingRead(HousingListingCreate):
     created_at: datetime
 
 
-# --------- Notifications ----------
+# Notifications 
 class NotificationCreate(ORMBase):
     user_id: uuid.UUID
     title: str
@@ -175,7 +173,7 @@ class NotificationRead(NotificationCreate):
     is_read: bool
 
 
-# --------- Library ----------
+# Library 
 class LibraryResourceCreate(ORMBase):
     title: str
     author: str
@@ -190,7 +188,7 @@ class LibraryResourceRead(LibraryResourceCreate):
     created_at: datetime
 
 
-# --------- Lost & Found ----------
+#  Lost & Found 
 class LostFoundItemCreate(ORMBase):
     title: str
     description: str
@@ -205,7 +203,7 @@ class LostFoundItemRead(LostFoundItemCreate):
     reported_at: datetime
 
 
-# --------- Knowledge / RAG ----------
+#  Knowledge / RAG 
 class DocumentCreate(ORMBase):
     title: str
     source_text: str

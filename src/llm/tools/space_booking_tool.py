@@ -117,6 +117,14 @@ def _to_utc_naive(dt_local: datetime) -> datetime:
     return dt_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _to_local_iso(dt: Optional[datetime]) -> Optional[str]:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TZ).isoformat()
+
+
 def _parse_day_offset(question: str, today: date) -> Optional[date]:
     q = (question or "").lower()
 
@@ -331,41 +339,6 @@ def _create_booking(
     return {"booking_id": str(booking.id), "status": str(booking.status)}
 
 
-# def _parse_booking_window(question: str) -> tuple[datetime, datetime]:
-#     """
-#     Returns naive UTC start/end suitable for DB filters.
-#     Understands: today/tomorrow/next week/day name + time + duration.
-#     """
-#     q = question or ""
-#     now_local = datetime.now(TZ)
-#     today = now_local.date()
-
-#     target_date = _parse_day_offset(q, today)
-#     tod = _parse_time_of_day(q)
-#     dur = _parse_duration(q)
-
-#     # If user provided a date/day/time
-#     if target_date and tod:
-#         start_local = datetime.combine(target_date, tod, tzinfo=TZ)
-#         end_local = start_local + dur
-#         return _to_utc_naive(start_local), _to_utc_naive(end_local)
-
-#     # If they only said "tomorrow" etc, assume 10 minutes from now for that day
-#     if target_date and not tod:
-#         start_local = datetime.combine(target_date, time(9, 0), tzinfo=TZ)
-#         end_local = start_local + dur
-#         return _to_utc_naive(start_local), _to_utc_naive(end_local)
-
-#     # If they only gave a time (e.g., "at 3pm"), assume today if future else tomorrow
-#     if tod and not target_date:
-#         start_local = datetime.combine(today, tod, tzinfo=TZ)
-#         if start_local < now_local:
-#             start_local = start_local + timedelta(days=1)
-#         end_local = start_local + dur
-#         return _to_utc_naive(start_local), _to_utc_naive(end_local)
-
-#     # fallback
-#     return _default_window(q)
 
 def find_available_spaces(
     db: Session,
@@ -438,17 +411,26 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
     if tod is None and _RIGHT_NOW_RE.search(q):
         start_local = _ensure_valid_slot_start(now_local)
         nxt = _next_slot_with_any_space(db, start_local, location_hint, max_checks=12)
+
         if not nxt:
-            return {"error": "no_availability", "message": "I couldn’t find any availability soon. Try another time."}
+            return {
+                "error": "no_availability",
+                "message": "I couldn’t find any availability soon. Try another time."
+            }
 
         slot_start_local, options = nxt
         slot_end_local = slot_start_local + SLOT_LEN
-
         label = f"{slot_start_local.strftime('%a %d %b %H:%M')}–{slot_end_local.strftime('%H:%M')}"
+
+        slot_start_utc = _to_utc_naive(slot_start_local)
+        slot_end_utc = _to_utc_naive(slot_end_local)
+
         return {
             "range_label": label,
-            "start_time": _to_utc_naive(slot_start_local).isoformat(),
-            "end_time": _to_utc_naive(slot_end_local).isoformat(),
+            "start_time": slot_start_utc.isoformat(),   # internal UTC
+            "end_time": slot_end_utc.isoformat(),       # internal UTC
+            "start_time_local": slot_start_local.isoformat(),
+            "end_time_local": slot_end_local.isoformat(),
             "location_hint": location_hint,
             "options": options,
             "requires_user_choice": True,
@@ -462,10 +444,10 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
     start_local = _ensure_valid_slot_start(start_local)
     end_local = start_local + SLOT_LEN
 
-    s_utc = _to_utc_naive(start_local)
-    e_utc = _to_utc_naive(end_local)
+    s_local = start_local.replace(tzinfo=None)
+    e_local = end_local.replace(tzinfo=None)
 
-    options = _find_available_spaces_for_slot(db, s_utc, e_utc, location_hint, limit=5)
+    options = _find_available_spaces_for_slot(db, s_local, e_local, location_hint, limit=5)
 
     if not options:
         nxt = _next_slot_with_any_space(db, _advance_slot(start_local), location_hint, max_checks=12)
@@ -491,8 +473,10 @@ def run_find(db: Session, question: str) -> Dict[str, Any]:
     label = f"{start_local.strftime('%a %d %b %H:%M')}–{end_local.strftime('%H:%M')}"
     return {
         "range_label": label,
-        "start_time": s_utc.isoformat(),
-        "end_time": e_utc.isoformat(),
+        "start_time": s_local.isoformat(),          # internal / DB-safe UTC
+        "end_time": e_local.isoformat(),            # internal / DB-safe UTC
+        "start_time_local": start_local.isoformat(),
+        "end_time_local": end_local.isoformat(),
         "location_hint": location_hint,
         "options": options,
         "requires_user_choice": True,
@@ -565,8 +549,10 @@ def run_set_time(db: Session, user_time_message: str, pending: Dict[str, Any]) -
     label = f"{start_local.strftime('%a %d %b %H:%M')}–{end_local.strftime('%H:%M')}"
     return {
         "range_label": label,
-        "start_time": s_utc.isoformat(),
-        "end_time": e_utc.isoformat(),
+        "start_time": s_utc.isoformat(),          # internal UTC
+        "end_time": e_utc.isoformat(),            # internal UTC
+        "start_time_local": start_local.isoformat(),
+        "end_time_local": end_local.isoformat(),
         "location_hint": location_hint,
         "options": options,
         "requires_user_choice": True,
@@ -630,11 +616,16 @@ def run_confirm(
 
     # Create booking
     result = _create_booking(db, user_id, space_id, start_utc, end_utc)
+    start_utc_dt = datetime.fromisoformat(pending["start_time"])
+    end_utc_dt = datetime.fromisoformat(pending["end_time"])
+
     return {
         "confirmed": True,
         "chosen": chosen,
-        "start_time": pending["start_time"],
-        "end_time": pending["end_time"],
+        "start_time": pending["start_time"],   # internal UTC
+        "end_time": pending["end_time"],       # internal UTC
+        "start_time_local": _to_local_iso(start_utc_dt),
+        "end_time_local": _to_local_iso(end_utc_dt),
         **result,
     }
 
@@ -660,7 +651,9 @@ def run_confirm_alt_slot(db: Session, user_id: str, pending: Dict[str, Any]) -> 
     return {
         "confirmed": True,
         "chosen": alt_space,
-        "start_time": pending["alt_start_time"],
-        "end_time": pending["alt_end_time"],
+        "start_time": pending["alt_start_time"],   # internal UTC
+        "end_time": pending["alt_end_time"],       # internal UTC
+        "start_time_local": _to_local_iso(start_utc),
+        "end_time_local": _to_local_iso(end_utc),
         **result,
     }
